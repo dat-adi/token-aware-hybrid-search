@@ -1,0 +1,19 @@
+qwen3:
+  model_name: "Qwen/Qwen3-8B"
+  device_map: "auto"
+  torch_dtype: "bfloat16"
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.95
+
+policy_network:
+  hidden_dim: 512
+  num_layers: 4
+  num_heads: 8
+  dropout: 0.1
+  activation: "gelu"
+
+reward_model:
+  model_name: "Qwen/Qwen3-4B"
+  num_labels: 2
+  dropout: 0.1

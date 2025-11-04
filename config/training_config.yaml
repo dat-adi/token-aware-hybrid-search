@@ -1,0 +1,31 @@
+reward_training:
+  batch_size: 16
+  learning_rate: 2e-5
+  num_epochs: 3
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  max_examples: 50000
+  num_incorrect_per_problem: 3
+
+policy_training:
+  algorithm: "ppo"
+  batch_size: 8
+  learning_rate: 1e-5
+  num_iterations: 100
+  problems_per_iteration: 32
+  ppo_epochs: 4
+  clip_epsilon: 0.2
+  value_coeff: 0.5
+  entropy_coeff: 0.01
+  max_grad_norm: 1.0
+  final_reward_correct: 10.0
+  final_reward_incorrect: -5.0
+  step_penalty: -0.1
+  gae_lambda: 0.95
+  discount_gamma: 0.99
+
+search:
+  max_depth: 20
+  max_nodes: 100
+  temperature: 0.8
+  use_policy: true

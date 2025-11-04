@@ -1,0 +1,14 @@
+evaluation:
+  dataset: "gsm8k_test"
+  batch_size: 1
+  num_samples: 1319
+  metrics:
+    - accuracy
+    - efficiency
+    - avg_nodes
+    - avg_depth
+    - token_usage
+    - search_time
+  save_trajectories: true
+  visualize: true
+  output_dir: "outputs/evaluation"
