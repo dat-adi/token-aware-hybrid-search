@@ -1,0 +1,81 @@
+# FAST TRAINING configuration
+# Optimized for speed with smaller models (3B reasoning + 1.5B PRM)
+# Perfect for rapid experimentation and method comparison
+
+reward_training:
+  # Reward model training (Phase 1)
+  # Larger batches possible with smaller model
+  batch_size: 16  # Increased from 8 (more VRAM available)
+  learning_rate: 2e-5
+  num_epochs: 3
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  max_examples: 50000
+  num_incorrect_per_problem: 3
+  gradient_accumulation_steps: 1  # No accumulation needed
+
+  # Speed optimizations
+  dataloader_num_workers: 4
+  fp16: true  # Mixed precision
+
+policy_training:
+  # Policy network training (Phase 2)
+  # Faster iterations with smaller models
+  algorithm: "ppo"
+  batch_size: 8  # Increased from 4 (smaller models = more VRAM)
+  learning_rate: 1e-5
+
+  # Reduced iterations for faster experiments
+  num_iterations: 50  # Reduced from 100 for quick results
+  problems_per_iteration: 32  # Increased from 16 (faster inference)
+
+  # PPO parameters
+  ppo_epochs: 4
+  clip_epsilon: 0.2
+  value_coeff: 0.5
+  entropy_coeff: 0.01
+  max_grad_norm: 1.0
+
+  # Reward shaping
+  final_reward_correct: 10.0
+  final_reward_incorrect: -5.0
+  step_penalty: -0.1
+
+  # GAE parameters
+  gae_lambda: 0.95
+  discount_gamma: 0.99
+
+search:
+  # Search parameters during training
+  max_depth: 12  # Reduced from 15 (faster)
+  max_nodes: 60  # Reduced from 80 (faster)
+  temperature: 0.8
+  use_policy: true
+
+# Memory optimization flags
+optimization:
+  use_gradient_checkpointing: false  # Not needed for small models
+  use_fp16: true
+  offload_optimizer: false
+  max_sequence_length: 512
+
+# Expected training time with this config:
+# Phase 1:
+#   - Data generation (fast synthetic): 2-5 minutes
+#   - Model training: 1-1.5 hours (vs 2-3 hours)
+#   - Total Phase 1: ~1.5 hours
+#
+# Phase 2:
+#   - 50 iterations × 32 problems
+#   - ~2-3 minutes per iteration (vs 5-7 minutes)
+#   - Total Phase 2: 2-4 hours
+#
+# TOTAL: 3.5-5.5 hours (vs 11-15 hours with larger models)
+# Speedup: ~3x faster!
+
+# Perfect for:
+#   - Comparing different RL algorithms
+#   - Testing tree search strategies
+#   - Ablation studies
+#   - Hyperparameter tuning
+#   - Quick proof-of-concept

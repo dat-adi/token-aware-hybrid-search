@@ -1,0 +1,61 @@
+# FAST TRAINING configuration - Optimized for speed and experimentation
+# Perfect for comparing methods and rapid iteration
+# Uses: 3-4B reasoning generator + 1.7B reward model
+
+qwen3:
+  # Reasoning generator (3B or 4B)
+  # 3B in bfloat16 uses ~6GB VRAM
+  model_name: "Qwen/Qwen2.5-3B-Instruct"  # Fast and capable
+  # Alternative: "Qwen/Qwen2.5-1.5B-Instruct" (even faster, ~3GB VRAM)
+
+  device_map: "auto"
+  torch_dtype: "bfloat16"
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.95
+
+  # Memory optimization
+  use_flash_attention: false  # Not needed for small models
+  load_in_8bit: false
+
+policy_network:
+  # GPS Policy Network (lightweight)
+  # Uses ~1-2GB VRAM
+  hidden_dim: 512
+  num_layers: 4
+  num_heads: 8
+  dropout: 0.1
+  activation: "gelu"
+
+reward_model:
+  # Process Reward Model (1.7B - very fast!)
+  # 1.7B in bfloat16 uses ~3-4GB VRAM
+  model_name: "Qwen/Qwen2.5-1.5B-Instruct"  # Smallest, fastest
+  # Note: Qwen 1.5B is close to 1.7B, or use:
+  # "Qwen/Qwen2.5-0.5B-Instruct" for ultra-fast (but lower quality)
+
+  num_labels: 2
+  dropout: 0.1
+  load_in_8bit: false
+
+# VRAM usage with this config:
+# Phase 1 (Reward Model Training):
+#   - GPU 0: Qwen 3B (~6GB) for data generation
+#   - Total: ~6GB (tons of headroom in 24GB GPU!)
+#
+# Phase 2 (Policy Training):
+#   - GPU 0: Qwen 3B generator (~6GB)
+#   - GPU 1: Qwen 1.5B reward model (~3GB) + GPS policy (~2GB) = ~5GB
+#   - Total: ~11GB (uses less than half of available 48GB!)
+#
+# Benefits:
+#   - 3-4x faster training than 7B/3B setup
+#   - 5-6x faster than 8B/4B setup
+#   - Perfect for rapid experimentation
+#   - Can run multiple experiments in parallel
+#   - Lower energy consumption
+
+# Performance expectations:
+#   - GSM8K accuracy: 60-75% (vs 75-85% with larger models)
+#   - Good enough for method comparison!
+#   - Can always scale up to larger models after validating approach
