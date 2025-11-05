@@ -59,6 +59,7 @@ class ProcessRewardModel(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+            logger.info(f"Set pad_token to eos_token")
 
         # Load model with classification head
         self.model = AutoModelForSequenceClassification.from_pretrained(
@@ -262,6 +263,12 @@ Solution:
         """
         instance = cls.__new__(cls)
         super(ProcessRewardModel, instance).__init__()
+
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        if self.model.config.pad_token_id is None:
+            self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
         instance.device = device
         instance.model_path = model_path
