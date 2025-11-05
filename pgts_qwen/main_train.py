@@ -12,7 +12,7 @@ from models.qwen3_wrapper import Qwen3ReasoningGenerator
 from models.reward_model import ProcessRewardModel, create_reward_training_example
 from models.policy_network import GPSPolicyNetwork
 from data.gsm8k_loader import load_gsm8k
-from data.reward_annotator import create_prm_dataset
+from data.reward_annotator_fast import create_prm_dataset_fast
 from training.ppo_trainer import PPOTrainer, PPOConfig
 
 logging.basicConfig(
@@ -55,9 +55,8 @@ def train_reward_model(
 
     # Generate PRM training data
     logger.info("Generating PRM training data...")
-    prm_dataset = create_prm_dataset(
+    prm_dataset = create_prm_dataset_fast(
         gsm8k_train_data,
-        reasoning_generator,
         num_incorrect_per_problem=train_config['reward_training']['num_incorrect_per_problem'],
         max_examples=train_config['reward_training']['max_examples']
     )
@@ -68,6 +67,15 @@ def train_reward_model(
         model_name=model_config['reward_model']['model_name'],
         num_labels=model_config['reward_model']['num_labels']
     )
+
+    # Fix padding token issue
+    if reward_model.tokenizer.pad_token is None:
+        reward_model.tokenizer.pad_token = reward_model.tokenizer.eos_token
+        logger.info(f"Set pad_token to eos_token: {reward_model.tokenizer.eos_token}")
+
+    if reward_model.model.config.pad_token_id is None:
+        reward_model.model.config.pad_token_id = reward_model.tokenizer.pad_token_id
+        logger.info(f"Set model pad_token_id to: {reward_model.tokenizer.pad_token_id}")
 
     # Prepare training data
     from transformers import Trainer, TrainingArguments
