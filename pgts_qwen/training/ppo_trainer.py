@@ -11,10 +11,10 @@ import numpy as np
 from dataclasses import dataclass
 from tqdm import tqdm
 
-from ..models.policy_network import GPSPolicyNetwork
-from ..models.qwen3_wrapper import Qwen3ReasoningGenerator
-from ..models.reward_model import ProcessRewardModel
-from ..tree_search.search_algorithm import PGTSSearch, SearchConfig, SearchTrajectory
+from models.policy_network import GPSPolicyNetwork
+from models.qwen3_wrapper import Qwen3ReasoningGenerator
+from models.reward_model import ProcessRewardModel
+from tree_search.search_algorithm import PGTSSearch, SearchConfig, SearchTrajectory
 
 logger = logging.getLogger(__name__)
 
