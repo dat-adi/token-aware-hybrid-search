@@ -246,16 +246,48 @@ class GPSPolicyNetwork(nn.Module):
             )
 
         # Get current node embedding
-        if isinstance(graph.current_node_idx, torch.Tensor):
-            if graph.current_node_idx.dim() == 0:
-                current_node_idx = graph.current_node_idx.item()
-            else:
-                # Batched case
-                current_node_idx = graph.current_node_idx
-        else:
-            current_node_idx = graph.current_node_idx
+        # Handle both single graph and batched graphs
+        if hasattr(graph, 'batch'):
+            # Batched graphs case - need to gather current nodes from each graph
+            batch_size = graph.batch.max().item() + 1
+            current_node_embeddings = []
 
-        current_node_embedding = x[current_node_idx]
+            for i in range(batch_size):
+                # Get nodes belonging to graph i
+                mask = graph.batch == i
+                node_indices = torch.where(mask)[0]
+
+                # Get current_node_idx for this graph (relative to global indexing)
+                if isinstance(graph.current_node_idx, torch.Tensor):
+                    if graph.current_node_idx.dim() == 0:
+                        # Single value - apply to all graphs (shouldn't happen in batch)
+                        local_idx = graph.current_node_idx.item()
+                        global_idx = node_indices[local_idx]
+                    else:
+                        # Tensor of indices - one per graph
+                        global_idx = graph.current_node_idx[i]
+                else:
+                    # List or single int
+                    if isinstance(graph.current_node_idx, list):
+                        global_idx = graph.current_node_idx[i]
+                    else:
+                        local_idx = graph.current_node_idx
+                        global_idx = node_indices[local_idx]
+
+                current_node_embeddings.append(x[global_idx])
+
+            current_node_embedding = torch.stack(current_node_embeddings)
+        else:
+            # Single graph case
+            if isinstance(graph.current_node_idx, torch.Tensor):
+                if graph.current_node_idx.dim() == 0:
+                    current_node_idx = graph.current_node_idx.item()
+                else:
+                    current_node_idx = graph.current_node_idx[0].item() if graph.current_node_idx.dim() > 0 else graph.current_node_idx.item()
+            else:
+                current_node_idx = graph.current_node_idx
+
+            current_node_embedding = x[current_node_idx].unsqueeze(0)
 
         # Compute action logits
         action_logits = self.action_head(current_node_embedding)
@@ -263,6 +295,10 @@ class GPSPolicyNetwork(nn.Module):
         # Apply action masking (if provided)
         if hasattr(graph, 'action_mask'):
             action_mask = graph.action_mask
+            # Ensure action_mask has the right shape for batched graphs
+            if action_mask.dim() == 1 and action_logits.dim() == 2:
+                # Single mask applied to batch - expand it
+                action_mask = action_mask.unsqueeze(0).expand(action_logits.size(0), -1)
             action_logits = action_logits.masked_fill(~action_mask, float('-inf'))
 
         # Compute action probabilities
@@ -340,13 +376,19 @@ class GPSPolicyNetwork(nn.Module):
         Evaluate actions for PPO update.
 
         Args:
-            graph: PyG Data object
+            graph: PyG Data object (can be batched via Batch.from_data_list)
             actions: Actions taken [batch_size]
 
         Returns:
             Tuple of (log_probs, values, entropy)
         """
         action_logits, action_probs, values = self.forward(graph, return_value=True)
+
+        # Handle both single and batched graphs
+        if action_logits.dim() == 1:
+            action_logits = action_logits.unsqueeze(0)
+            action_probs = action_probs.unsqueeze(0)
+            values = values.unsqueeze(0)
 
         # Create distribution
         action_dist = torch.distributions.Categorical(probs=action_probs)

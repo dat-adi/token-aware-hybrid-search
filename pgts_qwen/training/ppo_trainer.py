@@ -15,6 +15,7 @@ from models.policy_network import GPSPolicyNetwork
 from models.qwen3_wrapper import Qwen3ReasoningGenerator
 from models.reward_model import ProcessRewardModel
 from tree_search.search_algorithm import PGTSSearch, SearchConfig, SearchTrajectory
+from torch_geometric.data import Batch
 
 logger = logging.getLogger(__name__)
 
@@ -263,24 +264,15 @@ class PPOTrainer:
                 batch_returns = all_returns[batch_indices].to(self.device)
 
                 # Evaluate actions with current policy
+                # Batch all graphs together for parallel processing
                 batch_graphs = [state['graph'].to(self.device) for state in batch_states]
+                batched_graph = Batch.from_data_list(batch_graphs)
 
-                batch_log_probs = []
-                batch_values = []
-                batch_entropies = []
-
-                for graph, action in zip(batch_graphs, batch_actions):
-                    log_prob, value, entropy = self.policy_network.evaluate_actions(
-                        graph,
-                        action.unsqueeze(0)
-                    )
-                    batch_log_probs.append(log_prob)
-                    batch_values.append(value)
-                    batch_entropies.append(entropy)
-
-                batch_log_probs = torch.stack(batch_log_probs)
-                batch_values = torch.stack(batch_values)
-                batch_entropies = torch.stack(batch_entropies)
+                # Process all graphs in parallel
+                batch_log_probs, batch_values, batch_entropies = self.policy_network.evaluate_actions(
+                    batched_graph,
+                    batch_actions
+                )
 
                 # Compute PPO loss
                 ratio = torch.exp(batch_log_probs - batch_old_log_probs)
