@@ -7,7 +7,7 @@ import random
 import logging
 from tqdm import tqdm
 
-from ..models.qwen3_wrapper import Qwen3ReasoningGenerator
+from models.qwen3_wrapper import Qwen3ReasoningGenerator
 
 logger = logging.getLogger(__name__)
 
