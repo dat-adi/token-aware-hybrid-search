@@ -1,0 +1,32 @@
+# Requirements for CUDA 12.1+ / 13.0 systems
+# Use this if you're getting "no kernel image is available" errors
+
+# PyTorch with CUDA 12.1 (compatible with CUDA 13.0)
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+
+# Core dependencies
+transformers>=4.40.0
+accelerate>=0.28.0
+datasets>=2.18.0
+
+# Graph neural networks
+torch-geometric>=2.5.0
+torch-scatter>=2.1.2
+torch-sparse>=0.6.18
+
+# Optional: vLLM (if you want faster inference)
+# vllm>=0.6.0  # Uncomment if needed
+
+# Utilities
+numpy>=1.24.0
+tqdm>=4.66.0
+pyyaml>=6.0
+wandb>=0.16.0
+
+# Optional: Flash Attention 2 for faster training
+# Requires CUDA 11.6+, works with CUDA 12.1/13.0
+# Uncomment to install:
+# flash-attn>=2.5.0 --no-build-isolation

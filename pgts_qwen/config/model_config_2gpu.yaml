@@ -1,0 +1,43 @@
+# Model configuration optimized for 2x24GB GPUs
+# Uses smaller Qwen3 models to fit in VRAM
+
+qwen3:
+  # Main reasoning generator
+  # Qwen3-8B in bfloat16 uses ~16GB VRAM
+  model_name: "Qwen/Qwen2.5-7B-Instruct"  # Or use Qwen3-8B if available
+  device_map: "auto"  # Will be placed on GPU 0
+  torch_dtype: "bfloat16"
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.95
+
+  # Memory optimization
+  use_flash_attention: true  # Requires flash-attn package
+  load_in_8bit: false  # Set to true if you need more memory (slower)
+
+policy_network:
+  # GPS Policy Network (lightweight)
+  # Uses ~1-2GB VRAM
+  hidden_dim: 512
+  num_layers: 4
+  num_heads: 8
+  dropout: 0.1
+  activation: "gelu"
+
+reward_model:
+  # Process Reward Model (smaller for speed)
+  # Qwen3-4B in bfloat16 uses ~8GB VRAM
+  model_name: "Qwen/Qwen2.5-3B-Instruct"  # Or use Qwen3-4B if available
+  num_labels: 2
+  dropout: 0.1
+  load_in_8bit: false  # Set to true if OOM during Phase 2
+
+# Expected VRAM usage:
+# Phase 1 (Reward Model Training):
+#   - GPU 0: Qwen3-8B (16GB) for data generation
+#   - Total: ~16GB (fits in single 24GB GPU)
+#
+# Phase 2 (Policy Training):
+#   - GPU 0: Qwen3-8B generator (16GB)
+#   - GPU 1: Qwen3-4B reward model (8GB) + GPS policy (2GB)
+#   - Total: ~26GB (fits in 2x24GB with headroom)

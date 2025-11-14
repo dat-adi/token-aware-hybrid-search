@@ -91,7 +91,7 @@ class PPOTrainer:
         # Optimizer
         self.optimizer = optim.Adam(
             self.policy_network.parameters(),
-            lr=self.config.learning_rate
+            lr=float(self.config.learning_rate)
         )
 
         # Search algorithm
@@ -250,75 +250,76 @@ class PPOTrainer:
             indices = torch.randperm(len(all_states))
 
             for i in range(0, len(all_states), self.config.batch_size):
-                batch_indices = indices[i:i + self.config.batch_size]
+                with torch.autograd.set_detect_anomaly(True):
+                    batch_indices = indices[i:i + self.config.batch_size]
 
-                if len(batch_indices) == 0:
-                    continue
+                    if len(batch_indices) == 0:
+                        continue
 
-                # Get batch data
-                batch_states = [all_states[idx] for idx in batch_indices]
-                batch_actions = all_actions[batch_indices].to(self.device)
-                batch_old_log_probs = all_old_log_probs[batch_indices].to(self.device)
-                batch_advantages = all_advantages[batch_indices].to(self.device)
-                batch_returns = all_returns[batch_indices].to(self.device)
+                    # Get batch data
+                    batch_states = [all_states[idx] for idx in batch_indices]
+                    batch_actions = all_actions[batch_indices].to(self.device)
+                    batch_old_log_probs = all_old_log_probs[batch_indices].to(self.device)
+                    batch_advantages = all_advantages[batch_indices].to(self.device)
+                    batch_returns = all_returns[batch_indices].to(self.device)
 
-                # Evaluate actions with current policy
-                batch_graphs = [state['graph'].to(self.device) for state in batch_states]
+                    # Evaluate actions with current policy
+                    batch_graphs = [state['graph'].to(self.device) for state in batch_states]
 
-                batch_log_probs = []
-                batch_values = []
-                batch_entropies = []
+                    batch_log_probs = []
+                    batch_values = []
+                    batch_entropies = []
 
-                for graph, action in zip(batch_graphs, batch_actions):
-                    log_prob, value, entropy = self.policy_network.evaluate_actions(
-                        graph,
-                        action.unsqueeze(0)
+                    for graph, action in zip(batch_graphs, batch_actions):
+                        log_prob, value, entropy = self.policy_network.evaluate_actions(
+                            graph,
+                            action.unsqueeze(0)
+                        )
+                        batch_log_probs.append(log_prob)
+                        batch_values.append(value)
+                        batch_entropies.append(entropy)
+
+                    batch_log_probs = torch.stack(batch_log_probs)
+                    batch_values = torch.stack(batch_values)
+                    batch_entropies = torch.stack(batch_entropies)
+
+                    # Compute PPO loss
+                    ratio = torch.exp(batch_log_probs - batch_old_log_probs)
+                    surr1 = ratio * batch_advantages
+                    surr2 = torch.clamp(
+                        ratio,
+                        1.0 - self.config.clip_epsilon,
+                        1.0 + self.config.clip_epsilon
+                    ) * batch_advantages
+
+                    policy_loss = -torch.min(surr1, surr2).mean()
+
+                    # Value loss
+                    value_loss = F.mse_loss(batch_values, batch_returns)
+
+                    # Entropy bonus
+                    entropy_loss = -batch_entropies.mean()
+
+                    # Total loss
+                    loss = (
+                        policy_loss +
+                        self.config.value_coeff * value_loss +
+                        self.config.entropy_coeff * entropy_loss
                     )
-                    batch_log_probs.append(log_prob)
-                    batch_values.append(value)
-                    batch_entropies.append(entropy)
 
-                batch_log_probs = torch.stack(batch_log_probs)
-                batch_values = torch.stack(batch_values)
-                batch_entropies = torch.stack(batch_entropies)
+                    # Update
+                    self.optimizer.zero_grad()
+                    loss.backward(retain_graph=True)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.policy_network.parameters(),
+                        self.config.max_grad_norm
+                    )
+                    self.optimizer.step()
 
-                # Compute PPO loss
-                ratio = torch.exp(batch_log_probs - batch_old_log_probs)
-                surr1 = ratio * batch_advantages
-                surr2 = torch.clamp(
-                    ratio,
-                    1.0 - self.config.clip_epsilon,
-                    1.0 + self.config.clip_epsilon
-                ) * batch_advantages
-
-                policy_loss = -torch.min(surr1, surr2).mean()
-
-                # Value loss
-                value_loss = F.mse_loss(batch_values, batch_returns)
-
-                # Entropy bonus
-                entropy_loss = -batch_entropies.mean()
-
-                # Total loss
-                loss = (
-                    policy_loss +
-                    self.config.value_coeff * value_loss +
-                    self.config.entropy_coeff * entropy_loss
-                )
-
-                # Update
-                self.optimizer.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    self.policy_network.parameters(),
-                    self.config.max_grad_norm
-                )
-                self.optimizer.step()
-
-                total_policy_loss += policy_loss.item()
-                total_value_loss += value_loss.item()
-                total_entropy += -entropy_loss.item()
-                num_updates += 1
+                    total_policy_loss += policy_loss.item()
+                    total_value_loss += value_loss.item()
+                    total_entropy += -entropy_loss.item()
+                    num_updates += 1
 
         # Compute metrics
         metrics = {

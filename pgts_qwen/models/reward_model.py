@@ -264,11 +264,11 @@ Solution:
         instance = cls.__new__(cls)
         super(ProcessRewardModel, instance).__init__()
 
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+        # if cls.tokenizer.pad_token is None:
+        #     cls.tokenizer.pad_token = cls.tokenizer.eos_token
 
-        if self.model.config.pad_token_id is None:
-            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+        # if cls.model.config.pad_token_id is None:
+        #     cls.model.config.pad_token_id = cls.tokenizer.pad_token_id
 
         instance.device = device
         instance.model_path = model_path
@@ -278,12 +278,17 @@ Solution:
         instance.tokenizer = AutoTokenizer.from_pretrained(model_path)
         if instance.tokenizer.pad_token is None:
             instance.tokenizer.pad_token = instance.tokenizer.eos_token
+        
+        
 
         instance.model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             torch_dtype=torch_dtype,
             device_map="auto"
         )
+
+        if instance.model.config.pad_token_id is None:
+            instance.model.config.pad_token_id = instance.tokenizer.pad_token_id
 
         instance.model.eval()
         logger.info("Reward model loaded successfully")

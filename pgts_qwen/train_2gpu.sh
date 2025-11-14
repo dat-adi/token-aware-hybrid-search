@@ -5,7 +5,7 @@
 set -e
 
 # Configuration
-OUTPUT_DIR="outputs/training_2gpu_$(date +%Y%m%d_%H%M%S)"
+OUTPUT_DIR="outputs/training_2gpu_20251104_215652/reward_model_final"
 MODEL_CONFIG="config/model_config_fast.yaml"
 TRAIN_CONFIG="config/training_config_fast.yaml"
 
@@ -32,13 +32,9 @@ echo "Training config: $TRAIN_CONFIG"
 echo "Output dir: $OUTPUT_DIR"
 echo ""
 
-python train_optimized.py \
-    --model_config "$MODEL_CONFIG" \
-    --train_config "$TRAIN_CONFIG" \
-    --output_dir "$OUTPUT_DIR" \
-    2>&1 | tee "$OUTPUT_DIR/training.log"
+# "$OUTPUT_DIR"
+python train_optimized.py --model_config "$MODEL_CONFIG" --train_config "$TRAIN_CONFIG" --output_dir outputs/training_resume --skip_reward_training --reward_model_path $OUTPUT_DIR 2>&1 | tee "$OUTPUT_DIR/training.log"
 
-echo ""
 echo "=== Training Complete ==="
 echo "Results saved to: $OUTPUT_DIR"
 echo ""
