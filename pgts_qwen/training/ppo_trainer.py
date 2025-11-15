@@ -233,8 +233,9 @@ class PPOTrainer:
         all_advantages = (all_advantages - all_advantages.mean()) / (all_advantages.std() + 1e-8)
 
         all_actions = torch.tensor(all_actions, dtype=torch.long)
+        # Detach old log probs - they represent the behavior policy and should be constants
         all_old_log_probs = torch.stack([
-            lp if isinstance(lp, torch.Tensor) else torch.tensor(lp)
+            lp.detach() if isinstance(lp, torch.Tensor) else torch.tensor(lp)
             for lp in all_old_log_probs
         ])
         all_returns = torch.tensor(all_returns, dtype=torch.float32)
