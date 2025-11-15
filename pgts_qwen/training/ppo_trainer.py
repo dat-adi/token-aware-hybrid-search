@@ -309,7 +309,7 @@ class PPOTrainer:
 
                     # Update
                     self.optimizer.zero_grad()
-                    loss.backward(retain_graph=True)
+                    loss.backward()
                     torch.nn.utils.clip_grad_norm_(
                         self.policy_network.parameters(),
                         self.config.max_grad_norm
