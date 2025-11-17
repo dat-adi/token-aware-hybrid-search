@@ -13,9 +13,10 @@ from models.qwen3_wrapper import Qwen3ReasoningGenerator
 from models.reward_model import ProcessRewardModel
 from models.policy_network import GPSPolicyNetwork
 from data.gsm8k_loader import load_gsm8k
-from data.reward_annotator import create_prm_dataset
+# from data.reward_annotator import create_prm_dataset
+from data.prm800k_loader import create_prm_dataset_fast
 from training.ppo_trainer import PPOTrainer, PPOConfig
-from data.reward_annotator_fast import create_prm_dataset_fast
+# from data.reward_annotator_fast import create_prm_dataset_fast
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,9 +78,13 @@ def train_reward_model_optimized(
 
     # Generate PRM training data
     logger.info("Generating PRM training data...")
-    prm_dataset = create_prm_dataset_fast(  # Changed
-        gsm8k_train_data,  # No reasoning_generator needed!
-        num_incorrect_per_problem=train_config['reward_training']['num_incorrect_per_problem'],
+    # prm_dataset = create_prm_dataset_fast(  # Changed
+    #     gsm8k_train_data,  # No reasoning_generator needed!
+    #     num_incorrect_per_problem=train_config['reward_training']['num_incorrect_per_problem'],
+    #     max_examples=train_config['reward_training']['max_examples']
+    # )
+    prm_dataset = create_prm_dataset_fast(
+        gsm8k_train_data,
         max_examples=train_config['reward_training']['max_examples']
     )
 
@@ -107,6 +112,8 @@ def train_reward_model_optimized(
     # Prepare training data
     from transformers import Trainer, TrainingArguments
     from torch.utils.data import Dataset
+    from training.reward_callbacks import RewardMetricsCallback, PredictionLoggingCallback, create_compute_metrics_fn
+    import random
 
     class PRMDataset(Dataset):
         def __init__(self, examples, tokenizer):
@@ -137,36 +144,113 @@ def train_reward_model_optimized(
                 'labels': torch.tensor(example['label'], dtype=torch.long)
             }
 
-    # Create dataset
-    train_dataset = PRMDataset(prm_dataset, reward_model.tokenizer)
+    # Create train/validation split (90/10)
+    random.shuffle(prm_dataset)
+    val_split_idx = int(0.9 * len(prm_dataset))
+    train_examples = prm_dataset[:val_split_idx]
+    val_examples = prm_dataset[val_split_idx:]
 
-    # Training arguments with memory optimization
-    training_args = TrainingArguments(
-        output_dir=os.path.join(output_dir, 'reward_model'),
-        num_train_epochs=train_config['reward_training']['num_epochs'],
-        per_device_train_batch_size=train_config['reward_training']['batch_size'],
-        gradient_accumulation_steps=train_config['reward_training'].get('gradient_accumulation_steps', 1),
-        learning_rate=float(train_config['reward_training']['learning_rate']),
-        warmup_ratio=train_config['reward_training']['warmup_ratio'],
-        weight_decay=train_config['reward_training']['weight_decay'],
-        logging_steps=50,
-        save_steps=500,
-        save_total_limit=2,  # Only keep 2 checkpoints to save disk space
-        fp16=False,  # Mixed precision
-        gradient_checkpointing=True,  # Memory efficient
-        dataloader_num_workers=4,
-        report_to='none',
-        remove_unused_columns=False
+    logger.info(f"Split dataset: {len(train_examples)} train, {len(val_examples)} validation")
+
+    train_dataset = PRMDataset(train_examples, reward_model.tokenizer)
+    val_dataset = PRMDataset(val_examples, reward_model.tokenizer)
+
+    # Create compute_metrics function with prediction logging
+    reward_model_dir = os.path.join(output_dir, 'reward_model')
+    os.makedirs(reward_model_dir, exist_ok=True)
+    compute_metrics = create_compute_metrics_fn(
+        output_dir=reward_model_dir,
+        log_predictions=True,
+        num_samples_to_log=20
     )
 
-    # Train
+    # Training arguments with memory optimization and evaluation
+    # Check transformers version for compatibility
+    import transformers
+    transformers_version = tuple(int(x) for x in transformers.__version__.split('.')[:2])
+
+    training_args_dict = {
+        'output_dir': os.path.join(output_dir, 'reward_model'),
+        'num_train_epochs': train_config['reward_training']['num_epochs'],
+        'per_device_train_batch_size': train_config['reward_training']['batch_size'],
+        'gradient_accumulation_steps': train_config['reward_training'].get('gradient_accumulation_steps', 1),
+        'learning_rate': float(train_config['reward_training']['learning_rate']),
+        'warmup_ratio': train_config['reward_training']['warmup_ratio'],
+        'weight_decay': train_config['reward_training']['weight_decay'],
+
+        # Logging configuration
+        'logging_steps': 50,
+        'logging_first_step': True,
+
+        # Checkpoint configuration
+        'save_steps': 500,
+        'save_total_limit': 3,
+
+        # Memory optimization
+        'fp16': False,
+        'gradient_checkpointing': True,
+        'dataloader_num_workers': 4,
+
+        # Reporting
+        'report_to': 'none',
+        'remove_unused_columns': False
+    }
+
+    # Add version-specific parameters
+    if transformers_version >= (4, 0):
+        # Transformers 4.x+ uses these parameter names
+        training_args_dict.update({
+            'logging_dir': os.path.join(output_dir, 'reward_model', 'logs'),
+            'evaluation_strategy': "steps",
+            'eval_steps': 250,
+            'per_device_eval_batch_size': train_config['reward_training']['batch_size'] * 2,
+            'save_strategy': "steps",
+            'load_best_model_at_end': True,
+            'metric_for_best_model': "eval_f1",
+            'greater_is_better': True,
+        })
+    else:
+        # Transformers 3.x uses different parameter names
+        training_args_dict.update({
+            'evaluate_during_training': True,
+            'eval_steps': 250,
+            'per_device_eval_batch_size': train_config['reward_training']['batch_size'] * 2,
+        })
+        logger.warning(f"Using transformers {transformers.__version__} - some features may be limited")
+
+    training_args = TrainingArguments(**training_args_dict)
+
+    # Initialize callbacks for comprehensive logging
+    callbacks = [
+        RewardMetricsCallback(
+            output_dir=reward_model_dir,
+            log_predictions_every=500,
+            num_samples_to_log=10
+        ),
+        PredictionLoggingCallback(
+            output_dir=reward_model_dir,
+            log_every_n_steps=500,
+            num_samples=20
+        )
+    ]
+
+    # Create trainer with evaluation and callbacks
     trainer = Trainer(
         model=reward_model.model,
         args=training_args,
-        train_dataset=train_dataset
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        compute_metrics=compute_metrics,
+        callbacks=callbacks
     )
 
-    logger.info("Training reward model...")
+    logger.info("Training reward model with comprehensive metrics logging...")
+    logger.info(f"  - Train examples: {len(train_examples)}")
+    logger.info(f"  - Validation examples: {len(val_examples)}")
+    logger.info(f"  - Evaluation every {training_args.eval_steps} steps")
+    logger.info(f"  - Metrics logged to: {reward_model_dir}/metrics.log")
+    logger.info(f"  - Predictions logged to: {reward_model_dir}/predictions.log")
+
     trainer.train()
 
     # Save model

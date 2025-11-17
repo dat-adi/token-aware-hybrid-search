@@ -9,7 +9,9 @@ reward_training:
   num_epochs: 3
   warmup_ratio: 0.1
   weight_decay: 0.01
-  max_examples: 50000  # Full dataset
+  max_examples: 200000  # Increased from 50k - using ~20% of PRM800K (1.09M available)
+  # Rationale: Need more data for domain transfer (GPT-4→Qwen3B, MATH→GSM8k)
+  # 200k examples = ~37.5k updates/epoch = 112.5k total updates over 3 epochs
   num_incorrect_per_problem: 3
   gradient_accumulation_steps: 2  # Effective batch size = 8 * 2 = 16
 
