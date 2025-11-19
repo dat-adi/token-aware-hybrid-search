@@ -68,12 +68,14 @@ class PGTSSearch:
     ACTION_BRANCH = 1
     ACTION_BACKTRACK = 2
     ACTION_TERMINATE = 3
+    ACTION_SPAWN = 4
 
     ACTION_NAMES = {
         0: "EXPAND",
         1: "BRANCH",
         2: "BACKTRACK",
-        3: "TERMINATE"
+        3: "TERMINATE",
+        4: "SPAWN"
     }
 
     def __init__(
@@ -224,6 +226,8 @@ class PGTSSearch:
             return self.action_backtrack(tree)
         elif action == self.ACTION_TERMINATE:
             return True, 0.0
+        elif action == self.ACTION_SPAWN:
+            return self.action_spawn(tree, problem)
         else:
             raise ValueError(f"Unknown action: {action}")
 
@@ -350,6 +354,86 @@ class PGTSSearch:
         """
         success = tree.backtrack()
         return success, 0.0  # No reward for backtracking
+
+    def action_spawn(
+        self,
+        tree: TreeState,
+        problem: str
+    ) -> Tuple[bool, float]:
+        """
+        SPAWN: Rollout a new branch of tokens from a selected node.
+
+        Selects the best existing node (by reward) and generates a new
+        reasoning branch from that point, enabling exploration of promising
+        paths without backtracking through the tree manually.
+
+        Args:
+            tree: Current tree state
+            problem: Original problem
+
+        Returns:
+            Tuple of (success, reward)
+        """
+        # Find best non-root node to spawn from (by cumulative path reward)
+        best_node = None
+        best_score = float('-inf')
+
+        for node in tree.nodes.values():
+            if node.is_root():
+                continue
+            # Score by cumulative reward along path
+            path_reward = sum(n.reward for n in node.get_path_from_root())
+            if path_reward > best_score:
+                best_score = path_reward
+                best_node = node
+
+        if best_node is None:
+            logger.warning("No valid node to spawn from")
+            return False, -1.0
+
+        # Move to spawn node
+        tree.current_node = best_node
+
+        # Get reasoning chain to this point
+        current_path = tree.get_current_path()[1:]  # Exclude root
+        reasoning_chain = [node.content for node in current_path]
+
+        # Generate new branch from this node
+        try:
+            generated_text, hidden_state = self.reasoning_generator.generate_branch(
+                problem,
+                reasoning_chain,
+                return_hidden_states=True
+            )
+
+            if len(generated_text) == 0:
+                logger.warning("Empty generation in SPAWN, action failed")
+                return False, -1.0
+
+            # If hidden state is None, extract it
+            if hidden_state is None:
+                full_text = problem + "\n" + "\n".join(reasoning_chain) + "\n" + generated_text
+                hidden_state = self.reasoning_generator.extract_hidden_states(full_text)
+
+            # Compute reward
+            new_chain = reasoning_chain + [generated_text]
+            reward = self.reward_model.compute_step_reward(problem, new_chain, len(new_chain) - 1)
+
+            # Add node to tree as child of spawn point
+            tree.add_node(
+                content=generated_text,
+                hidden_state=hidden_state,
+                action="SPAWN",
+                reward=reward
+            )
+
+            logger.debug(f"SPAWN: Created new branch from node {best_node.node_id} with reward {reward:.3f}")
+
+            return True, reward
+
+        except Exception as e:
+            logger.error(f"Error in SPAWN action: {e}")
+            return False, -1.0
 
     def extract_answer(self, text: str) -> Optional[str]:
         """

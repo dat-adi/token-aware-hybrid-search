@@ -158,7 +158,7 @@ class GPSPolicyNetwork(nn.Module):
         num_heads: int = 8,
         dropout: float = 0.1,
         activation: str = "gelu",
-        num_actions: int = 4
+        num_actions: int = 5
     ):
         """
         Initialize GPS policy network.
@@ -170,7 +170,7 @@ class GPSPolicyNetwork(nn.Module):
             num_heads: Number of attention heads
             dropout: Dropout probability
             activation: Activation function
-            num_actions: Number of actions (4: EXPAND, BRANCH, BACKTRACK, TERMINATE)
+            num_actions: Number of actions (5: EXPAND, BRANCH, BACKTRACK, TERMINATE, SPAWN)
         """
         super().__init__()
 
@@ -360,7 +360,7 @@ class GPSPolicyNetwork(nn.Module):
         return log_probs, values.squeeze(-1), entropy
 
 
-def create_action_mask(tree_state, num_actions: int = 4) -> torch.Tensor:
+def create_action_mask(tree_state, num_actions: int = 5) -> torch.Tensor:
     """
     Create action mask for current tree state.
 
@@ -373,16 +373,21 @@ def create_action_mask(tree_state, num_actions: int = 4) -> torch.Tensor:
     """
     mask = torch.ones(num_actions, dtype=torch.bool)
 
-    # Action indices: 0=EXPAND, 1=BRANCH, 2=BACKTRACK, 3=TERMINATE
+    # Action indices: 0=EXPAND, 1=BRANCH, 2=BACKTRACK, 3=TERMINATE, 4=SPAWN
 
     # Can't backtrack from root
     if tree_state.current_node.is_root():
         mask[2] = False
 
-    # If at max depth, can't expand
+    # If at max depth, can't expand or branch
     max_depth = 20  # From config
     if tree_state.current_node.depth >= max_depth:
         mask[0] = False
         mask[1] = False
+
+    # SPAWN requires at least one non-root node to spawn from
+    # Can't spawn if only root exists
+    if len(tree_state.nodes) <= 1:
+        mask[4] = False
 
     return mask
