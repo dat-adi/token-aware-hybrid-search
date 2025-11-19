@@ -11,6 +11,12 @@ import numpy as np
 from dataclasses import dataclass
 from tqdm import tqdm
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Import F for MSE loss
+import torch.nn.functional as F
+
 from models.policy_network import GPSPolicyNetwork
 from models.qwen3_wrapper import Qwen3ReasoningGenerator
 from models.reward_model import ProcessRewardModel
@@ -70,7 +76,8 @@ class PPOTrainer:
         reasoning_generator: Qwen3ReasoningGenerator,
         reward_model: ProcessRewardModel,
         config: Optional[PPOConfig] = None,
-        device: str = "cuda"
+        device: str = "cuda",
+        log_file: Optional[str] = None
     ):
         """
         Initialize PPO trainer.
@@ -81,12 +88,15 @@ class PPOTrainer:
             reward_model: Process reward model
             config: PPO configuration
             device: Device to use
+            log_file: Path to detailed log file
         """
         self.policy_network = policy_network.to(device)
         self.reasoning_generator = reasoning_generator
         self.reward_model = reward_model
         self.config = config or PPOConfig()
         self.device = device
+        self.log_file = log_file
+        self.iteration_count = 0
 
         # Optimizer
         self.optimizer = optim.Adam(
@@ -103,7 +113,80 @@ class PPOTrainer:
             config=search_config
         )
 
+        # Initialize log file
+        if self.log_file:
+            with open(self.log_file, 'w') as f:
+                f.write("="*80 + "\n")
+                f.write("PGTS Training Log\n")
+                f.write("="*80 + "\n\n")
+
         logger.info("PPO Trainer initialized")
+
+    def _log_tree_visualization(self, tree, file, problem_idx):
+        """Log tree visualization to file."""
+        from tree_search.tree_state import TreeNode
+
+        file.write("\n" + "="*80 + "\n")
+        file.write(f"Tree Visualization - Problem {problem_idx}\n")
+        file.write("="*80 + "\n")
+
+        def truncate(text: str, max_len: int = 60) -> str:
+            text = text.replace('\n', ' ').strip()
+            if len(text) > max_len:
+                return text[:max_len-3] + "..."
+            return text
+
+        def visit_node(node: TreeNode, prefix: str = "", is_last: bool = True):
+            connector = "└── " if is_last else "├── "
+            content_preview = truncate(node.content, 60)
+            node_info = f"Node{node.node_id}"
+
+            if node.is_root():
+                node_info += " [ROOT]"
+            else:
+                node_info += f" [d={node.depth}, r={node.reward:.2f}]"
+
+            if node == tree.current_node:
+                node_info += " ← CURRENT"
+
+            file.write(f"{prefix}{connector}{node_info}\n")
+            file.write(f"{prefix}{'    ' if is_last else '│   '}  {content_preview}\n")
+
+            for i, child in enumerate(node.children):
+                is_last_child = (i == len(node.children) - 1)
+                child_prefix = prefix + ("    " if is_last else "│   ")
+                visit_node(child, child_prefix, is_last_child)
+
+        visit_node(tree.root)
+
+        features = tree.compute_features()
+        file.write("\n" + "-"*80 + "\n")
+        file.write("Tree Statistics:\n")
+        file.write(f"  Total Nodes: {features['num_nodes']}\n")
+        file.write(f"  Leaf Nodes: {features['num_leaves']}\n")
+        file.write(f"  Max Depth: {features['max_depth']}\n")
+        file.write(f"  Current Depth: {features['current_depth']}\n")
+        file.write(f"  Avg Reward: {features['avg_reward']:.3f}\n")
+        file.write("="*80 + "\n\n")
+
+        # Best reasoning path
+        best_leaf = tree.get_best_leaf()
+        path = best_leaf.get_path_from_root()
+
+        file.write("Best Reasoning Path:\n")
+        file.write("="*80 + "\n")
+        cumulative_reward = 0.0
+
+        for i, node in enumerate(path):
+            if node.is_root():
+                file.write(f"\n[PROBLEM]\n{node.content[:200]}...\n")
+            else:
+                cumulative_reward += node.reward
+                file.write(f"\n[STEP {i}] (reward={node.reward:.3f}, cumulative={cumulative_reward:.3f})\n")
+                file.write(f"{node.content[:300]}...\n")
+
+        file.write(f"\nFinal Cumulative Reward: {cumulative_reward:.3f}\n")
+        file.write("="*80 + "\n\n")
 
     def collect_trajectories(
         self,
@@ -135,6 +218,31 @@ class PPOTrainer:
                     trajectory,
                     ground_truths[idx]
                 )
+
+                # Detailed logging for debugging
+                if self.log_file:
+                    with open(self.log_file, 'a') as f:
+                        f.write(f"\n{'='*80}\n")
+                        f.write(f"Iteration {self.iteration_count} - Problem {idx + 1}\n")
+                        f.write(f"{'='*80}\n")
+                        f.write(f"Question: {problem[:200]}...\n")
+                        f.write(f"Ground Truth: {ground_truths[idx]}\n")
+                        f.write(f"Predicted Answer: {trajectory.final_answer}\n")
+                        f.write(f"Is Correct: {trajectory.is_correct}\n")
+                        f.write(f"Num Steps: {len(trajectory.states)}\n")
+                        f.write(f"Total Reward: {sum(trajectory.rewards):.3f}\n")
+
+                        # Log reasoning path
+                        best_leaf = tree.get_best_leaf()
+                        reasoning_path = best_leaf.get_path_from_root()[1:]  # Exclude root
+                        f.write(f"\nReasoning Path ({len(reasoning_path)} steps):\n")
+                        for i, node in enumerate(reasoning_path):
+                            f.write(f"\nStep {i+1} (reward={node.reward:.3f}):\n")
+                            f.write(f"{node.content[:300]}...\n")
+
+                        # Visualize tree for first problem and periodically
+                        if idx == 0 or (idx + 1) % 10 == 0:
+                            self._log_tree_visualization(tree, f, idx + 1)
 
             trajectories.append(trajectory)
 
@@ -323,14 +431,36 @@ class PPOTrainer:
                     num_updates += 1
 
         # Compute metrics
+        correct_count = sum([t.is_correct for t in trajectories])
+        total_count = len(trajectories)
+
         metrics = {
             'policy_loss': total_policy_loss / max(num_updates, 1),
             'value_loss': total_value_loss / max(num_updates, 1),
             'entropy': total_entropy / max(num_updates, 1),
             'num_trajectories': len(trajectories),
             'avg_trajectory_length': np.mean([len(t.states) for t in trajectories]),
-            'accuracy': np.mean([t.is_correct for t in trajectories])
+            'accuracy': np.mean([t.is_correct for t in trajectories]),
+            'correct_count': correct_count,
+            'total_count': total_count,
+            'avg_reward': np.mean([sum(t.rewards) for t in trajectories]),
+            'num_with_answers': sum([t.final_answer is not None for t in trajectories])
         }
+
+        # Log detailed metrics
+        if self.log_file:
+            with open(self.log_file, 'a') as f:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"Update Metrics\n")
+                f.write(f"{'='*80}\n")
+                f.write(f"Policy Loss: {metrics['policy_loss']:.4f}\n")
+                f.write(f"Value Loss: {metrics['value_loss']:.4f}\n")
+                f.write(f"Entropy: {metrics['entropy']:.4f}\n")
+                f.write(f"Accuracy: {metrics['accuracy']:.4f} ({correct_count}/{total_count})\n")
+                f.write(f"Avg Trajectory Length: {metrics['avg_trajectory_length']:.2f}\n")
+                f.write(f"Avg Reward: {metrics['avg_reward']:.3f}\n")
+                f.write(f"Problems with Answers: {metrics['num_with_answers']}/{total_count}\n")
+                f.write("\n")
 
         return metrics
 
@@ -355,6 +485,7 @@ class PPOTrainer:
         logger.info(f"Starting PPO training for {num_iterations} iterations")
 
         for iteration in range(num_iterations):
+            self.iteration_count = iteration
             logger.info(f"\n=== Iteration {iteration + 1}/{num_iterations} ===")
 
             # Sample problems
@@ -397,5 +528,4 @@ class PPOTrainer:
         logger.info(f"Checkpoint loaded from {path}")
 
 
-# Import F for MSE loss
-import torch.nn.functional as F
+

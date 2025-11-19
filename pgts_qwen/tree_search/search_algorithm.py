@@ -361,16 +361,37 @@ class PGTSSearch:
         Returns:
             Extracted answer or None
         """
-        # Look for answer markers
+        import re
+
+        # Look for answer markers (GSM8K format)
         if "####" in text:
             answer = text.split("####")[-1].strip()
+            # Extract just the number
+            numbers = re.findall(r'-?\d+\.?\d*', answer)
+            if numbers:
+                return numbers[0]
             return answer
-        elif "answer is" in text.lower():
-            parts = text.lower().split("answer is")
-            if len(parts) > 1:
-                answer = parts[-1].strip().split()[0]
-                return answer
 
+        # Look for "answer is" patterns
+        answer_patterns = [
+            r'(?:the )?answer is[:\s]+([0-9,]+\.?[0-9]*)',
+            r'(?:final )?answer[:\s]+([0-9,]+\.?[0-9]*)',
+            r'=\s*([0-9,]+\.?[0-9]*)\s*$',
+            r'\$\s*([0-9,]+\.?[0-9]*)',
+        ]
+
+        for pattern in answer_patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                return match.group(1).replace(',', '')
+
+        # Last resort: find the last number in the text
+        numbers = re.findall(r'-?\d+\.?\d*', text)
+        if numbers:
+            logger.debug(f"Extracting last number from text: {numbers[-1]}")
+            return numbers[-1]
+
+        logger.warning(f"Could not extract answer from: {text[:100]}...")
         return None
 
     def evaluate_solution(
@@ -389,13 +410,26 @@ class PGTSSearch:
             True if correct
         """
         if trajectory.final_answer is None:
+            logger.debug(f"No answer extracted. Ground truth: {ground_truth}")
             return False
 
         # Normalize answers for comparison
         try:
+            # Handle ground truth that might have "####" prefix
+            gt_clean = ground_truth.split("####")[-1].strip() if "####" in ground_truth else ground_truth
+
             pred_num = float(trajectory.final_answer.replace(",", ""))
-            gt_num = float(ground_truth.replace(",", ""))
-            return abs(pred_num - gt_num) < 1e-6
-        except:
-            # String comparison
-            return trajectory.final_answer.strip() == ground_truth.strip()
+            gt_num = float(gt_clean.replace(",", ""))
+
+            is_correct = abs(pred_num - gt_num) < 1e-6
+            if not is_correct:
+                logger.debug(f"Numeric mismatch: pred={pred_num}, gt={gt_num}")
+            return is_correct
+        except ValueError as e:
+            # String comparison fallback
+            pred_clean = trajectory.final_answer.strip().lower()
+            gt_clean = ground_truth.strip().lower()
+            is_correct = pred_clean == gt_clean
+            if not is_correct:
+                logger.debug(f"String mismatch: pred='{pred_clean}', gt='{gt_clean}'")
+            return is_correct

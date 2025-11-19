@@ -3,15 +3,15 @@
 # Uses: 3-4B reasoning generator + 1.7B reward model
 
 qwen3:
-  # Reasoning generator (3B or 4B)
-  # 3B in bfloat16 uses ~6GB VRAM
-  model_name: "Qwen/Qwen2.5-3B-Instruct"  # Fast and capable
-  # Alternative: "Qwen/Qwen2.5-1.5B-Instruct" (even faster, ~3GB VRAM)
+  # Reasoning generator - MUST USE MATH-TUNED MODEL!
+  # Qwen2.5-Math is fine-tuned on GSM8K and MATH datasets
+  model_name: "Qwen/Qwen2.5-Math-1.5B-Instruct"  # Math-tuned! (was: Qwen2.5-3B-Instruct)
+  # Alternative: "Qwen/Qwen2.5-Math-7B-Instruct" (better, ~14GB VRAM)
 
   device_map: "auto"
   torch_dtype: "bfloat16"
   max_new_tokens: 128
-  temperature: 0.7
+  temperature: 0.5  # Lower for more focused math reasoning (was: 0.7)
   top_p: 0.95
 
   # Memory optimization

@@ -41,6 +41,13 @@ policy_training:
   final_reward_incorrect: -5.0
   step_penalty: -0.1
 
+  # PRM reward calibration (NEW)
+  # The PRM is trained on synthetic data and is unreliable
+  # Scale down its influence and rely more on final outcomes
+  prm_reward_scale: 0.5   # Scale down PRM rewards (0.5 = 50%)
+  outcome_weight: 0.7     # Weight final outcome heavily (70%)
+  prm_weight: 0.3         # Weight PRM intermediate rewards less (30%)
+
   # GAE parameters
   gae_lambda: 0.95
   discount_gamma: 0.99

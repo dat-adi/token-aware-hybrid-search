@@ -245,14 +245,17 @@ def train_policy_optimized(
         discount_gamma=train_config['policy_training']['discount_gamma']
     )
 
-    # Initialize PPO trainer
+    # Initialize PPO trainer with log file
+    log_file = os.path.join(output_dir, 'training_detailed.log')
     ppo_trainer = PPOTrainer(
         policy_network=policy_network,
         reasoning_generator=reasoning_generator,
         reward_model=reward_model,
         config=ppo_config,
-        device=reward_device
+        device=reward_device,
+        log_file=log_file
     )
+    logger.info(f"Detailed logs will be saved to: {log_file}")
 
     # Prepare training data
     train_problems = [ex['problem'] for ex in gsm8k_train_data]
@@ -262,8 +265,8 @@ def train_policy_optimized(
     def log_callback(iteration, metrics):
         logger.info(f"Iteration {iteration + 1}: {metrics}")
 
-        # Save checkpoint
-        if (iteration + 1) % 10 == 0:
+        # Save checkpoint every 5 iterations
+        if (iteration + 1) % 5 == 0:
             checkpoint_path = os.path.join(
                 output_dir,
                 'policy_checkpoints',
@@ -271,6 +274,7 @@ def train_policy_optimized(
             )
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             ppo_trainer.save_checkpoint(checkpoint_path)
+            logger.info(f"Saved checkpoint to: {checkpoint_path}")
 
             # Log memory usage
             for i in range(torch.cuda.device_count()):

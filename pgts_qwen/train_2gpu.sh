@@ -3,14 +3,15 @@
 # Optimized for memory efficiency and throughput
 
 set -e
-
+echo "MWAHAHAHA"
 # Configuration
-OUTPUT_DIR="outputs/training_2gpu_20251104_215652/reward_model_final"
+REWARD_MODEL_PATH="/iacl/pg23/prahlad/rl/tahs/pgts_qwen/outputs/training_2gpu_20251511/reward_model_final"
+POLICY_OUTPUT_DIR="outputs/policy_training_$(date +%Y%m%d_%H%M%S)"
 MODEL_CONFIG="config/model_config_fast.yaml"
 TRAIN_CONFIG="config/training_config_fast.yaml"
 
-# Create output directory
-mkdir -p "$OUTPUT_DIR"
+# Create output directory for policy training
+mkdir -p "$POLICY_OUTPUT_DIR"
 
 # Log system info
 echo "=== System Information ==="
@@ -26,20 +27,30 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 export TOKENIZERS_PARALLELISM=false
 
 # Run optimized training script
-echo "=== Starting PGTS Training ==="
+echo "=== Starting PGTS Policy Training (Stage 2) ==="
 echo "Model config: $MODEL_CONFIG"
 echo "Training config: $TRAIN_CONFIG"
-echo "Output dir: $OUTPUT_DIR"
+echo "Reward Model Path: $REWARD_MODEL_PATH"
+echo "Policy Output Dir: $POLICY_OUTPUT_DIR"
 echo ""
 
-# "$OUTPUT_DIR"
-python train_optimized.py --model_config "$MODEL_CONFIG" --train_config "$TRAIN_CONFIG" --output_dir outputs/training_resume --skip_reward_training --reward_model_path $OUTPUT_DIR 2>&1 | tee "$OUTPUT_DIR/training.log"
+python train_optimized.py \
+    --model_config "$MODEL_CONFIG" \
+    --train_config "$TRAIN_CONFIG" \
+    --output_dir "$POLICY_OUTPUT_DIR" \
+    --skip_reward_training \
+    --reward_model_path "$REWARD_MODEL_PATH" \
+    2>&1 | tee "$POLICY_OUTPUT_DIR/training.log"
 
 echo "=== Training Complete ==="
-echo "Results saved to: $OUTPUT_DIR"
+echo "Policy training results saved to: $POLICY_OUTPUT_DIR"
+echo ""
+echo "Logs available at:"
+echo "  - Console log: $POLICY_OUTPUT_DIR/training.log"
+echo "  - Detailed log: $POLICY_OUTPUT_DIR/training_detailed.log"
 echo ""
 echo "To resume training from a checkpoint:"
 echo "python train_optimized.py \\"
 echo "    --skip_reward_training \\"
-echo "    --reward_model_path $OUTPUT_DIR/reward_model_final \\"
-echo "    --output_dir outputs/training_resume"
+echo "    --reward_model_path \"$REWARD_MODEL_PATH\" \\"
+echo "    --output_dir \"$POLICY_OUTPUT_DIR\""
