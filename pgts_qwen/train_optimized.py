@@ -293,6 +293,25 @@ def train_policy_optimized(
     ppo_trainer.save_checkpoint(final_path)
     logger.info(f"Final policy saved to {final_path}")
 
+    # Save action statistics
+    action_stats_path = os.path.join(output_dir, 'action_statistics.json')
+    ppo_trainer.save_action_statistics(action_stats_path)
+    logger.info(f"Action statistics saved to {action_stats_path}")
+
+    # Generate visualizations
+    try:
+        from utils.visualize_actions import generate_all_plots
+        viz_dir = os.path.join(output_dir, 'action_visualizations')
+        logger.info("Generating action statistics visualizations...")
+        generate_all_plots(
+            ppo_trainer.get_action_history(),
+            viz_dir,
+            prefix="action_stats"
+        )
+        logger.info(f"Action visualizations saved to {viz_dir}")
+    except Exception as e:
+        logger.error(f"Failed to generate visualizations: {e}")
+
 
 def main():
     """Main training function."""

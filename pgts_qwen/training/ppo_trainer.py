@@ -103,6 +103,13 @@ class PPOTrainer:
             config=search_config
         )
 
+        # Action statistics tracking
+        self.action_history = {
+            'iterations': [],
+            'action_counts': [],  # List of dicts with action counts per iteration
+            'action_distributions': []  # List of dicts with action percentages per iteration
+        }
+
         logger.info("PPO Trainer initialized")
 
     def collect_trajectories(
@@ -139,6 +146,56 @@ class PPOTrainer:
             trajectories.append(trajectory)
 
         return trajectories
+
+    def compute_action_statistics(
+        self,
+        trajectories: List[SearchTrajectory]
+    ) -> Dict[str, any]:
+        """
+        Compute action statistics from trajectories.
+
+        Args:
+            trajectories: List of search trajectories
+
+        Returns:
+            Dictionary with action counts and distributions
+        """
+        action_names = {
+            0: "EXPAND",
+            1: "BRANCH",
+            2: "BACKTRACK",
+            3: "TERMINATE",
+            4: "SPAWN"
+        }
+
+        # Count actions
+        action_counts = {name: 0 for name in action_names.values()}
+
+        for trajectory in trajectories:
+            for action in trajectory.actions:
+                action_name = action_names.get(action, f"UNKNOWN_{action}")
+                if action_name in action_counts:
+                    action_counts[action_name] += 1
+                else:
+                    action_counts[action_name] = 1
+
+        # Compute total and distributions
+        total_actions = sum(action_counts.values())
+        action_distributions = {}
+
+        if total_actions > 0:
+            action_distributions = {
+                name: (count / total_actions) * 100
+                for name, count in action_counts.items()
+            }
+        else:
+            action_distributions = {name: 0.0 for name in action_counts.keys()}
+
+        return {
+            'counts': action_counts,
+            'distributions': action_distributions,
+            'total': total_actions
+        }
 
     def compute_advantages(
         self,
@@ -376,11 +433,25 @@ class PPOTrainer:
             # Collect trajectories
             trajectories = self.collect_trajectories(batch_problems, batch_answers)
 
+            # Compute action statistics
+            action_stats = self.compute_action_statistics(trajectories)
+
+            # Store action statistics
+            self.action_history['iterations'].append(iteration + 1)
+            self.action_history['action_counts'].append(action_stats['counts'])
+            self.action_history['action_distributions'].append(action_stats['distributions'])
+
             # Update policy
             metrics = self.update_policy(trajectories)
 
+            # Add action statistics to metrics
+            metrics['action_counts'] = action_stats['counts']
+            metrics['action_distributions'] = action_stats['distributions']
+
             # Log metrics
             logger.info(f"Metrics: {metrics}")
+            logger.info(f"Action Statistics: {action_stats['counts']}")
+            logger.info(f"Action Distribution (%): {action_stats['distributions']}")
 
             if log_callback:
                 log_callback(iteration, metrics)
@@ -402,6 +473,27 @@ class PPOTrainer:
         self.policy_network.load_state_dict(checkpoint['policy_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         logger.info(f"Checkpoint loaded from {path}")
+
+    def save_action_statistics(self, path: str):
+        """
+        Save action statistics to JSON file.
+
+        Args:
+            path: Path to save JSON file
+        """
+        import json
+        with open(path, 'w') as f:
+            json.dump(self.action_history, f, indent=2)
+        logger.info(f"Action statistics saved to {path}")
+
+    def get_action_history(self) -> Dict:
+        """
+        Get action history for visualization.
+
+        Returns:
+            Dictionary with action history
+        """
+        return self.action_history
 
 
 # Import F for MSE loss
