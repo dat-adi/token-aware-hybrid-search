@@ -237,16 +237,73 @@ Alternative approach for Step {len(reasoning_chain)}:"""
 
         generated_text = generated_text.strip()
 
-        # Extract hidden states (last layer, last token)
+        # Extract hidden states with robust error handling
         hidden_state = None
-        if return_hidden_states and hasattr(outputs, 'hidden_states'):
-            # Get hidden states from the last generated token
-            # hidden_states is a tuple of tuples: (layer_0, layer_1, ..., layer_n)
-            # We want the last layer
-            last_hidden_states = outputs.hidden_states[-1][-1]  # Last step, last layer
-            hidden_state = last_hidden_states[0, -1, :]  # Last token of first batch
+        if return_hidden_states:
+            hidden_state = self._extract_hidden_state_robust(outputs)
+
+            # Fallback: if extraction failed, use forward pass method
+            if hidden_state is None:
+                logger.debug("Failed to extract from generation outputs, using fallback")
+                try:
+                    # Get full text for forward pass
+                    full_text = prompt + " " + generated_text
+                    hidden_state = self.extract_hidden_states(full_text)
+                except Exception as e:
+                    logger.warning(f"Fallback hidden state extraction also failed: {e}")
 
         return generated_text, hidden_state
+
+    def _extract_hidden_state_robust(self, outputs) -> Optional[torch.Tensor]:
+        """
+        Robustly extract hidden state from generation outputs.
+
+        Args:
+            outputs: GenerateDecoderOnlyOutput from model.generate()
+
+        Returns:
+            Hidden state tensor or None if extraction fails
+        """
+        try:
+            if not hasattr(outputs, 'hidden_states') or outputs.hidden_states is None:
+                return None
+
+            if len(outputs.hidden_states) == 0:
+                return None
+
+            # hidden_states structure: tuple of (tuple of layer tensors) for each generation step
+            last_step_hidden = outputs.hidden_states[-1]  # Last generated token
+
+            if not isinstance(last_step_hidden, tuple) or len(last_step_hidden) == 0:
+                return None
+
+            last_layer = last_step_hidden[-1]  # Last layer (e.g., layer 32 for Qwen3)
+
+            # Validate tensor shape
+            if not isinstance(last_layer, torch.Tensor):
+                return None
+
+            if last_layer.dim() != 3:  # Should be [batch, seq_len, hidden_dim]
+                logger.warning(f"Unexpected hidden state shape: {last_layer.shape}")
+                return None
+
+            # Extract: first batch, last position
+            hidden_state = last_layer[0, -1, :]
+
+            # Validate dimension
+            expected_dim = self.get_hidden_dim()
+            if hidden_state.shape[0] != expected_dim:
+                logger.warning(
+                    f"Hidden state dim mismatch: got {hidden_state.shape[0]}, "
+                    f"expected {expected_dim}"
+                )
+                return None
+
+            return hidden_state
+
+        except (IndexError, AttributeError, TypeError) as e:
+            logger.debug(f"Hidden state extraction error: {e}")
+            return None
 
     def extract_hidden_states(
         self,

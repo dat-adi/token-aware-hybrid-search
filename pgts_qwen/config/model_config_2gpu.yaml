@@ -19,10 +19,12 @@ policy_network:
   # GPS Policy Network (lightweight)
   # Uses ~1-2GB VRAM
   hidden_dim: 512
-  num_layers: 4
+  num_layers: 2  # Paper uses 2 GPS layers
   num_heads: 8
   dropout: 0.1
   activation: "gelu"
+  use_rwse: true  # Random Walk Structural Encodings
+  rwse_dim: 8
 
 reward_model:
   # Process Reward Model (smaller for speed)

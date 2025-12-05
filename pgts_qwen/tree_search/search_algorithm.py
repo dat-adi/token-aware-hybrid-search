@@ -269,17 +269,21 @@ class PGTSSearch:
 
             # Compute reward
             new_chain = reasoning_chain + [generated_text]
-            reward = self.reward_model.compute_step_reward(problem, new_chain, len(new_chain) - 1)
+            step_reward = self.reward_model.compute_step_reward(problem, new_chain, len(new_chain) - 1)
 
-            # Add node to tree
+            # Apply action cost (Paper Eq. 2: R(s,a) = R(sd, ad) - C(a))
+            action_cost = 0.1  # C(a) for EXPAND
+            expand_reward = step_reward - action_cost
+
+            # Add node to tree (store PRM reward, not action reward)
             tree.add_node(
                 content=generated_text,
                 hidden_state=hidden_state,
                 action="EXPAND",
-                reward=reward
+                reward=step_reward
             )
 
-            return True, reward
+            return True, expand_reward
 
         except Exception as e:
             logger.error(f"Error in EXPAND action: {e}")
@@ -291,7 +295,16 @@ class PGTSSearch:
         problem: str
     ) -> Tuple[bool, float]:
         """
-        BRANCH: Explore alternative reasoning path.
+        BRANCH: Explore alternative reasoning path by creating a sibling node.
+
+        Paper (Eq. 3): R(s,a) = R(s'_{d-1}, a'_{d-1}) - R(s_{d-1}, a_{d-1}) - C(a)
+
+        Steps:
+        1. Store current node's reward (for comparison)
+        2. Backtrack to parent
+        3. Generate alternative step at same depth (sibling)
+        4. Compute reward as difference: new_sibling_reward - old_sibling_reward - cost
+        5. Move to new sibling
 
         Args:
             tree: Current tree state
@@ -300,11 +313,22 @@ class PGTSSearch:
         Returns:
             Tuple of (success, reward)
         """
-        # Get current reasoning chain
-        current_path = tree.get_current_path()[1:]  # Exclude root
-        reasoning_chain = [node.content for node in current_path]
+        # Can't branch from root (no parent to go back to)
+        if tree.current_node.is_root():
+            logger.warning("Cannot BRANCH from root node")
+            return False, -1.0
 
-        # Generate alternative step
+        # Store current node's reward for comparison
+        current_node_reward = tree.current_node.reward
+
+        # Get parent node
+        parent_node = tree.current_node.parent
+
+        # Get reasoning chain up to parent (for generating sibling)
+        parent_path = parent_node.get_path_from_root()[1:]  # Exclude root
+        reasoning_chain = [node.content for node in parent_path]
+
+        # Generate alternative step (sibling of current node)
         try:
             generated_text, hidden_state = self.reasoning_generator.generate_branch(
                 problem,
@@ -321,19 +345,33 @@ class PGTSSearch:
                 full_text = problem + "\n" + "\n".join(reasoning_chain) + "\n" + generated_text
                 hidden_state = self.reasoning_generator.extract_hidden_states(full_text)
 
-            # Compute reward
+            # Compute new sibling's PRM reward
             new_chain = reasoning_chain + [generated_text]
-            reward = self.reward_model.compute_step_reward(problem, new_chain, len(new_chain) - 1)
+            new_sibling_reward = self.reward_model.compute_step_reward(
+                problem, new_chain, len(new_chain) - 1
+            )
 
-            # Add node to tree
+            # Compute BRANCH reward as difference (Equation 3 from paper)
+            # R(s,a) = R(s'_{d-1}, a'_{d-1}) - R(s_{d-1}, a_{d-1}) - C(a)
+            action_cost = 0.2  # C(a) for BRANCH
+            branch_reward = new_sibling_reward - current_node_reward - action_cost
+
+            # Move to parent and add new sibling
+            tree.current_node = parent_node
             tree.add_node(
                 content=generated_text,
                 hidden_state=hidden_state,
                 action="BRANCH",
-                reward=reward
+                reward=new_sibling_reward  # Store PRM reward, not branch reward
             )
 
-            return True, reward
+            logger.debug(
+                f"BRANCH: old_reward={current_node_reward:.3f}, "
+                f"new_reward={new_sibling_reward:.3f}, "
+                f"branch_reward={branch_reward:.3f}"
+            )
+
+            return True, branch_reward
 
         except Exception as e:
             logger.error(f"Error in BRANCH action: {e}")
@@ -344,7 +382,12 @@ class PGTSSearch:
         tree: TreeState
     ) -> Tuple[bool, float]:
         """
-        BACKTRACK: Return to parent node.
+        BACKTRACK: Return to parent node and revoke intermediate rewards.
+
+        Paper (Eq. 4): R(s,a) = R(s_{d-K-1}, a'_{d-K-1}) - Σ(k=1 to K) R(s_{d-k}, a_{d-k}) - C(a)
+
+        Note: Currently implements K=1 (backtrack one step). For multi-step backtrack,
+        this would need to sum rewards over K steps.
 
         Args:
             tree: Current tree state
@@ -352,8 +395,26 @@ class PGTSSearch:
         Returns:
             Tuple of (success, reward)
         """
+        if tree.current_node.is_root():
+            return False, 0.0
+
+        # Store current node's reward (will be revoked)
+        revoked_reward = tree.current_node.reward
+
+        # Backtrack to parent
         success = tree.backtrack()
-        return success, 0.0  # No reward for backtracking
+        if not success:
+            return False, 0.0
+
+        # Compute backtrack reward (Equation 4 with K=1)
+        # R(s,a) = 0 - revoked_reward - C(a)
+        # (The R(s_{d-K-1}, a'_{d-K-1}) term is 0 because we're not generating new node yet)
+        action_cost = 0.5  # C(a) for BACKTRACK
+        backtrack_reward = -revoked_reward - action_cost
+
+        logger.debug(f"BACKTRACK: revoked_reward={revoked_reward:.3f}, backtrack_reward={backtrack_reward:.3f}")
+
+        return True, backtrack_reward
 
     def action_spawn(
         self,

@@ -147,6 +147,11 @@ class PPOTrainer:
         """
         Compute advantages using GAE.
 
+        Paper reward structure:
+        - Intermediate rewards: R(s,a) from each action (already in trajectory.rewards)
+        - Final reward: +10 if correct, -5 if incorrect (added to last step)
+        - Step penalty: -0.1 per step (distributed across trajectory)
+
         Args:
             trajectory: Search trajectory
 
@@ -157,19 +162,21 @@ class PPOTrainer:
         values = [v.item() if isinstance(v, torch.Tensor) else v
                  for v in trajectory.values]
 
-        # Add final reward
+        if len(rewards) == 0:
+            return [], []
+
+        # Apply step penalty to each reward (per-step efficiency penalty)
+        # This encourages the policy to find solutions with fewer steps
+        for i in range(len(rewards)):
+            rewards[i] += self.config.step_penalty
+
+        # Add final reward to last step only
         if trajectory.is_correct:
             final_reward = self.config.final_reward_correct
         else:
             final_reward = self.config.final_reward_incorrect
 
-        # Add step penalties
-        num_steps = len(rewards)
-        step_penalty = self.config.step_penalty * num_steps
-
-        # Adjust last reward
-        if len(rewards) > 0:
-            rewards[-1] += final_reward + step_penalty
+        rewards[-1] += final_reward
 
         # Compute advantages using GAE
         advantages = []

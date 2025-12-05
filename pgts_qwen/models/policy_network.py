@@ -8,8 +8,43 @@ from torch_geometric.nn import GATv2Conv, global_mean_pool
 from torch_geometric.data import Data, Batch
 from typing import Optional, Tuple
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def compute_random_walk_pe(edge_index, num_nodes, k_steps=8):
+    """
+    Compute Random Walk Positional Encodings (RWSE).
+
+    Args:
+        edge_index: Edge indices [2, num_edges]
+        num_nodes: Number of nodes in graph
+        k_steps: Number of random walk steps
+
+    Returns:
+        RWSE features [num_nodes, k_steps]
+    """
+    # Build adjacency matrix
+    adj = torch.zeros(num_nodes, num_nodes, device=edge_index.device)
+    adj[edge_index[0], edge_index[1]] = 1.0
+
+    # Compute degree matrix for normalization
+    deg = adj.sum(dim=1, keepdim=True)
+    deg = torch.where(deg > 0, deg, torch.ones_like(deg))  # Avoid division by zero
+
+    # Transition matrix: P = D^-1 * A
+    trans_matrix = adj / deg
+
+    # Compute k-step random walk probabilities
+    rwse = torch.zeros(num_nodes, k_steps, device=edge_index.device)
+    current = torch.eye(num_nodes, device=edge_index.device)
+
+    for k in range(k_steps):
+        current = current @ trans_matrix
+        rwse[:, k] = torch.diagonal(current)
+
+    return rwse
 
 
 class GPSLayer(nn.Module):
@@ -154,11 +189,13 @@ class GPSPolicyNetwork(nn.Module):
         self,
         input_dim: int = 4096,  # Qwen3 hidden dim
         hidden_dim: int = 512,
-        num_layers: int = 4,
+        num_layers: int = 2,  # Paper uses 2 GPS layers
         num_heads: int = 8,
         dropout: float = 0.1,
         activation: str = "gelu",
-        num_actions: int = 5
+        num_actions: int = 5,
+        use_rwse: bool = True,
+        rwse_dim: int = 8
     ):
         """
         Initialize GPS policy network.
@@ -166,11 +203,13 @@ class GPSPolicyNetwork(nn.Module):
         Args:
             input_dim: Input node feature dimension
             hidden_dim: Hidden dimension for GPS layers
-            num_layers: Number of GPS layers
+            num_layers: Number of GPS layers (paper: 2)
             num_heads: Number of attention heads
             dropout: Dropout probability
             activation: Activation function
             num_actions: Number of actions (5: EXPAND, BRANCH, BACKTRACK, TERMINATE, SPAWN)
+            use_rwse: Whether to use Random Walk Structural Encodings
+            rwse_dim: Dimension of RWSE (number of random walk steps)
         """
         super().__init__()
 
@@ -178,14 +217,31 @@ class GPSPolicyNetwork(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.num_actions = num_actions
+        self.use_rwse = use_rwse
+        self.rwse_dim = rwse_dim
 
-        # Node feature projection
-        self.node_projection = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU() if activation == "gelu" else nn.ReLU(),
-            nn.Dropout(dropout)
-        )
+        # RWSE projection (if enabled)
+        if use_rwse:
+            self.rwse_projection = nn.Sequential(
+                nn.Linear(rwse_dim, hidden_dim // 4),
+                nn.LayerNorm(hidden_dim // 4),
+                nn.GELU() if activation == "gelu" else nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+            # Node feature projection (input + RWSE)
+            self.node_projection = nn.Sequential(
+                nn.Linear(input_dim + hidden_dim // 4, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU() if activation == "gelu" else nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+        else:
+            self.node_projection = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU() if activation == "gelu" else nn.ReLU(),
+                nn.Dropout(dropout)
+            )
 
         # GPS layers
         self.gps_layers = nn.ModuleList([
@@ -233,8 +289,20 @@ class GPSPolicyNetwork(nn.Module):
         Returns:
             Tuple of (action_logits, action_probs, value)
         """
-        # Project node features
-        x = self.node_projection(graph.x)
+        # Compute RWSE if enabled
+        if self.use_rwse:
+            rwse = compute_random_walk_pe(
+                graph.edge_index,
+                graph.num_nodes,
+                k_steps=self.rwse_dim
+            )
+            rwse_features = self.rwse_projection(rwse)
+
+            # Concatenate with node features
+            x_combined = torch.cat([graph.x, rwse_features], dim=-1)
+            x = self.node_projection(x_combined)
+        else:
+            x = self.node_projection(graph.x)
 
         # Apply GPS layers
         for gps_layer in self.gps_layers:
